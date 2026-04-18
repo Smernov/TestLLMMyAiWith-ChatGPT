@@ -26,38 +26,52 @@ jobs:
 
       - name: Install system deps (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential patchelf zip
 
       - name: Install system deps (Windows)
         if: matrix.os == 'windows-latest'
-        run: choco install -y python3
         shell: powershell
+        run: |
+          choco install -y python3
 
-      - name: Create venv
+      - name: Create venv (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
           python -m venv .venv
-          if [ -f .venv/bin/activate ]; then
-            . .venv/bin/activate
-          else
-            .venv\Scripts\activate
-          fi
+          source .venv/bin/activate
           python -m pip install --upgrade pip
-        shell: bash
 
-      - name: Install Python deps (light for CI)
+      - name: Create venv (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
         run: |
-          if [ -f .venv/bin/activate ]; then
-            . .venv/bin/activate
-          else
-            .venv\Scripts\activate
-          fi
+          python -m venv .venv
+          . .venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+
+      - name: Install Python deps (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          source .venv/bin/activate
           pip install --upgrade pip
           pip install rich transformers sentencepiece pyinstaller
-        shell: bash
 
-      - name: Run py_compile smoke test
+      - name: Install Python deps (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          . .venv\Scripts\Activate.ps1
+          pip install --upgrade pip
+          pip install rich transformers sentencepiece pyinstaller
+
+      - name: Run py_compile smoke test (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
           if [ -f hub_finetune.py ]; then
             python -m py_compile hub_finetune.py
@@ -66,26 +80,39 @@ jobs:
           else
             echo "No entry script found" && exit 1
           fi
-        shell: bash
 
-      - name: Package with PyInstaller
+      - name: Run py_compile smoke test (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
         run: |
-          if [ -f hub_finetune.py ]; then
-            ENTRY=hub_finetune.py
-          elif [ -f hub.py ]; then
-            ENTRY=hub.py
-          else
-            echo "No entry script found" && exit 1
-          fi
-          echo "Entry: $ENTRY"
-          rm -rf build dist __pycache__ "${ENTRY%.*}.spec" || true
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # On windows runner we still run bash; produce one-folder for reliability
-            pyinstaller --noconfirm --clean --onedir "$ENTRY"
-          else
-            pyinstaller --noconfirm --clean --onedir "$ENTRY"
-          fi
+          if (Test-Path hub_finetune.py) {
+            python -m py_compile hub_finetune.py
+          } elseif (Test-Path hub.py) {
+            python -m py_compile hub.py
+          } else {
+            Write-Error "No entry script found"; exit 1
+          }
+
+      - name: Package with PyInstaller (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
         shell: bash
+        run: |
+          if [ -f hub_finetune.py ]; then ENTRY=hub_finetune.py
+          elif [ -f hub.py ]; then ENTRY=hub.py
+          else echo "No entry script found" && exit 1
+          fi
+          rm -rf build dist __pycache__ "${ENTRY%.*}.spec" || true
+          pyinstaller --noconfirm --clean --onedir "$ENTRY"
+
+      - name: Package with PyInstaller (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          if (Test-Path hub_finetune.py) { $ENTRY = 'hub_finetune.py' }
+          elseif (Test-Path hub.py) { $ENTRY = 'hub.py' }
+          else { Write-Error "No entry script found"; exit 1 }
+          Remove-Item -Recurse -Force build,dist,__pycache__ -ErrorAction SilentlyContinue
+          pyinstaller --noconfirm --clean --onedir $ENTRY
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -94,4 +121,3 @@ jobs:
           path: |
             dist
             build
-            "${{ github.workspace }}"
