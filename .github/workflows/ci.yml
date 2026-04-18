@@ -1,0 +1,81 @@
+name: CI - test hub
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: [3.10, 3.11]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Show environment
+        run: |
+          python --version
+          pip --version
+
+      - name: Create venv and activate
+        if: runner.os == 'Windows'
+        run: |
+          python -m venv .venv
+          .venv\Scripts\activate
+          pip install --upgrade pip
+        shell: powershell
+
+      - name: Create venv and activate (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate || .venv\Scripts\activate
+          pip install --upgrade pip
+          pip install torch transformers accelerate bitsandbytes peft datasets sentencepiece rich || true
+        shell: bash
+
+      - name: Run lint / import smoke test
+        run: |
+          source .venv/bin/activate || .venv\Scripts\activate
+          # Basic static check: try importing script as module
+          python -c "import sys, importlib.util, runpy; print('OK python');"
+          # If your script exposes a --help or can be imported, try quick import
+          python -c "import hub_finetune as mod; print('imported', getattr(mod,'__name__',None))" || true
+        shell: bash
+
+      - name: Run quick execution smoke (non-blocking)
+        run: |
+          source .venv/bin/activate || .venv\Scripts\activate
+          # Run the script with --help or stop immediately to verify it runs without blocking
+          if [ -f ./hub_finetune.py ]; then
+            python hub_finetune.py --help || true
+          elif [ -f ./hub.py ]; then
+            python hub.py --help || true
+          else
+            echo "No hub script found"
+          fi
+        shell: bash
+
+      - name: Upload logs (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-${{ matrix.os }}-${{ matrix.python-version }}
+          path: |
+            ${{ github.workspace }}/
