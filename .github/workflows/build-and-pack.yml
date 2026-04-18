@@ -14,6 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: [3.11]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,54 +29,61 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential patchelf zip
+
       - name: Install system deps (Windows)
         if: matrix.os == 'windows-latest'
-        run: |
-          choco install -y python3
+        run: choco install -y python3
         shell: powershell
 
       - name: Create venv
         run: |
           python -m venv .venv
-          . .venv/bin/activate || .venv\Scripts\activate
+          if [ -f .venv/bin/activate ]; then
+            . .venv/bin/activate
+          else
+            .venv\Scripts\activate
+          fi
           python -m pip install --upgrade pip
         shell: bash
 
       - name: Install Python deps (light for CI)
         run: |
-          . .venv/bin/activate || .venv\Scripts\activate
+          if [ -f .venv/bin/activate ]; then
+            . .venv/bin/activate
+          else
+            .venv\Scripts\activate
+          fi
           pip install --upgrade pip
-          # Install only what's needed to run hub (avoid heavy torch in CI). If you need torch in CI, remove exclusions.
           pip install rich transformers sentencepiece pyinstaller
         shell: bash
 
-      - name: Run lint/import smoke test
+      - name: Run py_compile smoke test
         run: |
-          . .venv/bin/activate || .venv\Scripts\activate
-          python -m py_compile hub_finetune.py || python -m py_compile hub.py
+          if [ -f hub_finetune.py ]; then
+            python -m py_compile hub_finetune.py
+          elif [ -f hub.py ]; then
+            python -m py_compile hub.py
+          else
+            echo "No entry script found" && exit 1
+          fi
         shell: bash
 
-      - name: Package with PyInstaller (Windows: exe, Ubuntu: single-folder)
+      - name: Package with PyInstaller
         run: |
-          . .venv/bin/activate || .venv\Scripts\activate
-          # choose entry script
-          if [ -f ./hub_finetune.py ]; then
+          if [ -f hub_finetune.py ]; then
             ENTRY=hub_finetune.py
-          elif [ -f ./hub.py ]; then
+          elif [ -f hub.py ]; then
             ENTRY=hub.py
           else
             echo "No entry script found" && exit 1
           fi
           echo "Entry: $ENTRY"
-          # Clean previous build
           rm -rf build dist __pycache__ "${ENTRY%.*}.spec" || true
-          # PyInstaller options:
-          # Windows: onefile -> .exe
-          # Ubuntu: one-folder (safer for libraries like transformers) -> dist/<name>/
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            pyinstaller --noconfirm --clean --onefile "$ENTRY"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # On windows runner we still run bash; produce one-folder for reliability
+            pyinstaller --noconfirm --clean --onedir "$ENTRY"
           else
-            pyinstaller --noconfirm --clean --add-data "hub_state.json:." --distpath dist/$ENTRY-folder "$ENTRY"
+            pyinstaller --noconfirm --clean --onedir "$ENTRY"
           fi
         shell: bash
 
@@ -86,5 +94,4 @@ jobs:
           path: |
             dist
             build
-            .venv
-            "${{ github.workspace }}/$ENTRY" || dist/*
+            "${{ github.workspace }}"
