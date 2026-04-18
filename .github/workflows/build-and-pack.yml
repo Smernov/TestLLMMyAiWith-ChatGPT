@@ -1,0 +1,90 @@
+name: Build & Package Hub
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: [3.11]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system deps (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential patchelf zip
+      - name: Install system deps (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install -y python3
+        shell: powershell
+
+      - name: Create venv
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate || .venv\Scripts\activate
+          python -m pip install --upgrade pip
+        shell: bash
+
+      - name: Install Python deps (light for CI)
+        run: |
+          . .venv/bin/activate || .venv\Scripts\activate
+          pip install --upgrade pip
+          # Install only what's needed to run hub (avoid heavy torch in CI). If you need torch in CI, remove exclusions.
+          pip install rich transformers sentencepiece pyinstaller
+        shell: bash
+
+      - name: Run lint/import smoke test
+        run: |
+          . .venv/bin/activate || .venv\Scripts\activate
+          python -m py_compile hub_finetune.py || python -m py_compile hub.py
+        shell: bash
+
+      - name: Package with PyInstaller (Windows: exe, Ubuntu: single-folder)
+        run: |
+          . .venv/bin/activate || .venv\Scripts\activate
+          # choose entry script
+          if [ -f ./hub_finetune.py ]; then
+            ENTRY=hub_finetune.py
+          elif [ -f ./hub.py ]; then
+            ENTRY=hub.py
+          else
+            echo "No entry script found" && exit 1
+          fi
+          echo "Entry: $ENTRY"
+          # Clean previous build
+          rm -rf build dist __pycache__ "${ENTRY%.*}.spec" || true
+          # PyInstaller options:
+          # Windows: onefile -> .exe
+          # Ubuntu: one-folder (safer for libraries like transformers) -> dist/<name>/
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            pyinstaller --noconfirm --clean --onefile "$ENTRY"
+          else
+            pyinstaller --noconfirm --clean --add-data "hub_state.json:." --distpath dist/$ENTRY-folder "$ENTRY"
+          fi
+        shell: bash
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}-${{ matrix.python-version }}
+          path: |
+            dist
+            build
+            .venv
+            "${{ github.workspace }}/$ENTRY" || dist/*
