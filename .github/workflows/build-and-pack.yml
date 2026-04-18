@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -26,98 +26,58 @@ jobs:
 
       - name: Install system deps (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
-        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential patchelf zip
 
-      - name: Install system deps (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
-        run: |
-          choco install -y python3
-
-      - name: Create venv (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
+      - name: Create venv
         run: |
           python -m venv .venv
-          source .venv/bin/activate
-          python -m pip install --upgrade pip
 
-      - name: Create venv (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
+      - name: Upgrade pip + install deps
         run: |
-          python -m venv .venv
-          . .venv\Scripts\Activate.ps1
-          python -m pip install --upgrade pip
-
-      - name: Install Python deps (Ubuntu)
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install rich transformers sentencepiece pyinstaller
         if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          source .venv/bin/activate
-          pip install --upgrade pip
-          pip install rich transformers sentencepiece pyinstaller
 
-      - name: Install Python deps (Windows)
+      - name: Upgrade pip + install deps (Windows)
+        run: |
+          .venv\Scripts\python -m pip install --upgrade pip
+          .venv\Scripts\pip install rich transformers sentencepiece pyinstaller
         if: matrix.os == 'windows-latest'
-        shell: powershell
-        run: |
-          . .venv\Scripts\Activate.ps1
-          pip install --upgrade pip
-          pip install rich transformers sentencepiece pyinstaller
 
-      - name: Run py_compile smoke test (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
+      - name: Smoke test
         run: |
-          if [ -f hub_finetune.py ]; then
-            python -m py_compile hub_finetune.py
-          elif [ -f hub.py ]; then
-            python -m py_compile hub.py
-          else
-            echo "No entry script found" && exit 1
-          fi
-
-      - name: Run py_compile smoke test (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
-        run: |
-          if (Test-Path hub_finetune.py) {
-            python -m py_compile hub_finetune.py
-          } elseif (Test-Path hub.py) {
-            python -m py_compile hub.py
-          } else {
-            Write-Error "No entry script found"; exit 1
-          }
-
-      - name: Package with PyInstaller (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          if [ -f hub_finetune.py ]; then ENTRY=hub_finetune.py
-          elif [ -f hub.py ]; then ENTRY=hub.py
+          if [ -f hub_finetune.py ]; then python -m py_compile hub_finetune.py
+          elif [ -f hub.py ]; then python -m py_compile hub.py
           else echo "No entry script found" && exit 1
           fi
-          rm -rf build dist __pycache__ "${ENTRY%.*}.spec" || true
-          pyinstaller --noconfirm --clean --onedir "$ENTRY"
+        shell: bash
+        if: matrix.os == 'ubuntu-latest'
 
-      - name: Package with PyInstaller (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
+      - name: Smoke test (Windows)
         run: |
-          if (Test-Path hub_finetune.py) { $ENTRY = 'hub_finetune.py' }
-          elseif (Test-Path hub.py) { $ENTRY = 'hub.py' }
+          if (Test-Path hub_finetune.py) { python -m py_compile hub_finetune.py }
+          elseif (Test-Path hub.py) { python -m py_compile hub.py }
           else { Write-Error "No entry script found"; exit 1 }
+        if: matrix.os == 'windows-latest'
+
+      - name: Package (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          ENTRY=$( [ -f hub_finetune.py ] && echo hub_finetune.py || echo hub.py )
+          rm -rf build dist __pycache__ *.spec || true
+          .venv/bin/pyinstaller --noconfirm --clean --onedir "$ENTRY"
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          if (Test-Path hub_finetune.py) { $ENTRY = 'hub_finetune.py' } else { $ENTRY = 'hub.py' }
           Remove-Item -Recurse -Force build,dist,__pycache__ -ErrorAction SilentlyContinue
-          pyinstaller --noconfirm --clean --onedir $ENTRY
+          .venv\Scripts\pyinstaller --noconfirm --clean --onedir $ENTRY
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}-${{ matrix.python-version }}
-          path: |
-            dist
-            build
+          path: dist
